@@ -78,10 +78,10 @@ export namespace SessionPrompt {
           }[]
           pending: {
             resolve(input: MessageV2.WithParts): void
-            parts: MessageV2.Part[]
-            model?: Provider.Model
+            parts: PromptInput["parts"]
+            model?: z.infer<typeof PromptInput>["model"]
             system?: string
-            format?: MessageV2.Format
+            format?: z.infer<typeof MessageV2.Format>
             priority?: "urgent" | "normal" | "background"
             queuedAt: number
           }[]
@@ -105,10 +105,10 @@ export namespace SessionPrompt {
     sessionID: SessionID,
     input: {
       resolve(input: MessageV2.WithParts): void
-      parts: MessageV2.Part[]
-      model?: Provider.Model
+      parts: PromptInput["parts"]
+      model?: z.infer<typeof PromptInput>["model"]
       system?: string
-      format?: MessageV2.Format
+      format?: z.infer<typeof MessageV2.Format>
       priority?: "urgent" | "normal" | "background"
     },
   ) {
@@ -187,7 +187,7 @@ export namespace SessionPrompt {
           }),
       ]),
     ),
-    priority: z.enum(["urgent", "normal", "background"]).optional().default("normal"),
+    priority: z.enum(["urgent", "normal", "background"]).optional(),
   })
   export type PromptInput = z.infer<typeof PromptInput>
 
@@ -278,6 +278,7 @@ export namespace SessionPrompt {
     s[sessionID] = {
       abort: controller,
       callbacks: [],
+      pending: [],
     }
     return controller.signal
   }
@@ -372,22 +373,34 @@ export namespace SessionPrompt {
           }
 
           await Session.updateMessage(info)
+
+          // Build full parts for the resolve callback
+          const fullParts: MessageV2.Part[] = []
+
           for (const part of p.parts) {
+            // Convert to full MessageV2.Part by adding required fields
+            const fullPart: MessageV2.Part = {
+              ...part,
+              id: part.id ? PartID.make(part.id) : PartID.ascending(),
+              sessionID,
+              messageID: info.id,
+            } as MessageV2.Part
+
             // Add context tag to queued messages so LLM knows they're mid-task additions
-            const isQueued = part.type === "text" && !part.synthetic
-            if (isQueued) {
-              await Session.updatePart({
-                ...part,
-                messageID: info.id,
-                sessionID,
-                text: `<queued-message priority="${p.priority ?? "normal"}">\n${part.text}\n</queued-message>`,
-              })
+            if (fullPart.type === "text" && !fullPart.synthetic) {
+              const taggedPart = {
+                ...fullPart,
+                text: `<queued-message priority="${p.priority ?? "normal"}">\n${fullPart.text}\n</queued-message>`,
+              }
+              await Session.updatePart(taggedPart)
+              fullParts.push(taggedPart)
             } else {
-              await Session.updatePart({ ...part, messageID: info.id, sessionID })
+              await Session.updatePart(fullPart)
+              fullParts.push(fullPart)
             }
           }
 
-          p.resolve({ info, parts: p.parts })
+          p.resolve({ info, parts: fullParts })
         }
       }
 

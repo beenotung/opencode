@@ -767,8 +767,12 @@ export namespace Session {
   )
 
   export class BusyError extends Error {
+    override readonly name = "SessionBusyError"
     constructor(public readonly sessionID: string) {
       super(`Session ${sessionID} is busy`)
+    }
+    static isInstance(error: unknown): error is BusyError {
+      return error instanceof BusyError
     }
   }
 
